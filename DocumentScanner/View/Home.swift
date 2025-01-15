@@ -23,13 +23,21 @@ struct Home: View {
                 .padding(15)
                 
             }
-            .navigationTitle("Document's")
+            .navigationTitle("Documents")
             .safeAreaInset(edge: .bottom) {
                 ScanDocumentButton()
             }
         }
         .fullScreenCover(isPresented: $showScannerView) {
-            // call scanner view
+            ScannerView { error in
+                print("Error: \(error.localizedDescription)")
+            } didCancel: {
+                print("User canceled scanning.")
+            } didFinish: { scan in
+                print("Scanned \(scan.pageCount) pages.")
+            }
+            .ignoresSafeArea()
+
         }
     }
     
