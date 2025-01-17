@@ -7,14 +7,19 @@
 
 import SwiftUI
 import PDFKit
+import LocalAuthentication
 
 struct DocumentDetailView: View {
     @Environment(\.dismiss) var dismiss
     @Environment(\.modelContext) private var context
+    @Environment(\.scenePhase) private var scene
     
     @State private var isLoading: Bool = false
     @State private var showFileMover: Bool = false
     @State private var fileURL: URL?
+    
+    @State private var isLockAvailable: Bool?
+    @State private var isUnlocked: Bool = false
     
     var document: Document
     var body: some View {
@@ -43,11 +48,28 @@ struct DocumentDetailView: View {
             .background(.black)
             .toolbarVisibility(.hidden, for: .navigationBar)
             .loadingScreen(status: $isLoading)
+            .overlay {
+                LockView()
+            }
             .fileMover(isPresented: $showFileMover, file: fileURL) { result in
                 // removing the temporary file
                 guard let fileURL else { return }
                 try? FileManager.default.removeItem(at: fileURL)
                 self.fileURL = nil
+            }
+            .onAppear {
+                guard document.isLocked else {
+                    isUnlocked = true
+                    return
+                }
+                
+                let context = LAContext()
+                isLockAvailable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+            }
+            .onChange(of: scene) { oldValue, newValue in
+                if newValue != .active && document.isLocked {
+                    isUnlocked = false
+                }
             }
         }
     }
@@ -60,7 +82,11 @@ struct DocumentDetailView: View {
             .hSpacing(.center)
             .overlay(alignment: .trailing) {
                 // lock button
-                Button(action: createAndShareDocument) {
+                Button {
+                    document.isLocked.toggle()
+                    isUnlocked = !document.isLocked
+                    try? context.save()
+                } label: {
                     Image(systemName: document.isLocked ? "lock.fill" : "lock.open.fill")
                         .font(.title3)
                         .foregroundStyle(.purple)
@@ -72,9 +98,7 @@ struct DocumentDetailView: View {
     private func FooterView() -> some View {
         HStack {
             // share button
-            Button {
-                //
-            } label: {
+            Button(action: createAndShareDocument) {
                 Image(systemName: "square.and.arrow.up.fill")
                     .font(.title3)
                     .foregroundStyle(.purple)
@@ -96,6 +120,51 @@ struct DocumentDetailView: View {
             }
         }
         .padding([.horizontal, .bottom], 15)
+    }
+    
+    @ViewBuilder
+    private func LockView() -> some View {
+        if document.isLocked {
+            ZStack {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea()
+                
+                VStack(spacing: 6) {
+                    if let isLockAvailable, !isLockAvailable {
+                        Text("Please, enable biometric access in Settings to unlock this document")
+                            .multilineTextAlignment(.center)
+                            .frame(width: 200)
+                    } else {
+                        Image(systemName: "lock.fill")
+                            .font(.largeTitle)
+                        
+                        Text("Tap do unlock!")
+                            .font(.callout)
+                    }
+                }
+                .padding(15)
+                .background(.bar, in: .rect(cornerRadius: 10))
+                .contentShape(.rect)
+                .onTapGesture(perform: authenticateUser)
+            }
+            .opacity(isUnlocked ? 0 : 1)
+            .animation(snappy, value: isUnlocked)
+        }
+    }
+    
+    private func authenticateUser() {
+        let context = LAContext()
+        if context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
+            context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Locked Document") { status, _ in
+                DispatchQueue.main.async {
+                    self.isUnlocked = status
+                }
+            }
+        } else {
+            isLockAvailable = false
+            isUnlocked = false
+        }
     }
     
     private func createAndShareDocument() {
